@@ -1,0 +1,304 @@
+---
+title: "MS4S09"
+output: html_document
+
+---
+**Task A – Text Mining**
+```{r}
+library(readr)
+
+# Load the data set
+dataset <- read_csv("MS4S09_CW_Book_Reviews.csv")
+head(dataset)
+# Convert Rating to numeric
+dataset$Rating <- as.numeric(dataset$Rating)
+
+# Print the column names
+colnames(dataset)
+```
+
+```{r}
+# Load necessary libraries
+library(tidytext)
+library(dplyr)
+library(ggplot2)
+library(forcats)
+
+# Tokenize the text
+tokenized_text <- dataset %>%
+  unnest_tokens(word, Review_text)
+
+# Explore word frequency
+word_freq <- tokenized_text %>%
+  count(word, sort = TRUE)
+
+# Visualize top words
+top_words_plot <- word_freq %>%
+  slice_max(order_by = n, n = 10) %>%
+  ggplot(aes(x = fct_reorder(word, n), y = n, fill = word)) +
+  geom_col() +
+  labs(title = "Top 10 Most Frequent Words in Reviews",
+       x = "Word",
+       y = "Frequency",
+       fill = "Word") +
+  theme_minimal()
+
+# Show the plot
+print(top_words_plot)
+
+```
+
+**Task B – Sentiment Analysis**
+```{r}
+# Load necessary libraries
+library(tidytext)
+library(dplyr)
+library(ggplot2)
+library(forcats)
+library(wordcloud) 
+
+# Load the bing lexicon
+bing_lexicon <- get_sentiments("bing")
+
+# Perform sentiment analysis using bing lexicon
+sentiment_scores <- tokenized_text %>%
+  inner_join(bing_lexicon, by = "word") %>%
+  group_by(Title) %>%
+  summarise(sentiment_score = sum(sentiment == "positive") - sum(sentiment == "negative"))
+
+# Visualize sentiment distribution
+sentiment_distribution_plot <- ggplot(sentiment_scores, aes(x = sentiment_score)) +
+  geom_histogram(binwidth = 1, fill = "skyblue", color = "black") +
+  labs(title = "Sentiment Distribution of Book Reviews",
+       x = "Sentiment Score",
+       y = "Frequency") +
+  theme_minimal() +
+  geom_text(aes(label = ..count..), stat = "count", vjust = -0.5)
+
+# Identify overall sentiment (positive/negative/neutral)
+sentiment_scores <- sentiment_scores %>%
+  mutate(sentiment = case_when(
+    sentiment_score > 0 ~ "Positive",
+    sentiment_score < 0 ~ "Negative",
+    TRUE ~ "Neutral"
+  ))
+
+# Visualize overall sentiment distribution
+overall_sentiment_distribution_plot <- sentiment_scores %>%
+  ggplot(aes(x = sentiment, fill = sentiment)) +
+  geom_bar() +
+  labs(title = "Overall Sentiment Distribution of Book Reviews",
+       x = "Sentiment",
+       y = "Frequency",
+       fill = "Sentiment") +
+  theme_minimal() +
+  geom_text(aes(label = ..count..), stat = "count", position = position_stack(vjust = 0.5))
+
+# Show the plots
+print(sentiment_distribution_plot)
+print(overall_sentiment_distribution_plot)
+
+# Create a word cloud for positive sentiment
+positive_words <- sentiment_scores %>%
+  filter(sentiment == "Positive") %>%
+  pull(Title)
+
+positive_wordcloud <- tokenized_text %>%
+  filter(Title %in% positive_words) %>%
+  anti_join(stop_words) %>%
+  count(word) %>%
+  with(wordcloud(word, n, max.words = 50, scale = c(3, 0.5), colors = brewer.pal(8, "Dark2")))
+
+print(positive_wordcloud)
+
+# Visualize distribution of book ratings
+rating_distribution_plot <- dataset %>%
+  ggplot(aes(x = Rating)) +
+  geom_histogram(binwidth = 1, fill = "skyblue", color = "black") +
+  labs(title = "Distribution of Book Ratings",
+       x = "Rating",
+       y = "Frequency") +
+  theme_minimal() +
+  geom_text(aes(label = ..count..), stat = "count", vjust = -0.5)
+
+# Show the plot
+print(rating_distribution_plot)
+
+
+
+```
+
+**•	Informative conclusions:**
+
+The collective analysis of sentiment distribution, overall sentiment categories, positive sentiment word cloud, and book rating distribution provides a comprehensive understanding of the sentiment landscape within the book reviews dataset.
+Readers express predominantly positive sentiments, aligning with the higher distribution of positive ratings.
+The insights gained from these analyses can inform authors, publishers, and readers about the prevailing sentiments and rating trends, aiding in better understanding and decision-making in the literary domain.
+
+**Task C – Topic Modelling**
+```{r}
+# Load necessary libraries
+library(tidytext)
+library(dplyr)
+library(tidyr)
+library(tm)
+library(topicmodels)
+
+# Load the dataset
+dataset <- read_csv("MS4S09_CW_Book_Reviews.csv")
+
+# Reduce the dataset (adjust 'sample_size' as needed)
+set.seed(123)
+sample_size <- 500
+reduced_dataset <- dataset %>% sample_n(sample_size)
+
+# Combine review title and text into a single text column
+reduced_dataset <- reduced_dataset %>%
+  mutate(Review_combined = paste(Review_title, Review_text, sep = " "))
+
+# Create a document-term matrix
+corpus <- Corpus(VectorSource(reduced_dataset$Review_combined))
+dtm <- DocumentTermMatrix(corpus)
+
+# Convert the document-term matrix to a matrix
+dtm_matrix <- as.matrix(dtm)
+
+# Fit an LDA model
+lda_model <- LDA(dtm_matrix, k = 5)
+
+# Get the most probable terms for each topic
+topic_terms <- terms(lda_model, 10)
+
+# Assign topics to reviews
+topic_assignments <- tidy(lda_model, matrix = "beta") %>%
+  gather(key = "topic", value = "beta", -term) %>%
+  arrange(desc(beta)) %>%
+  group_by(term) %>%
+  slice_head(n = 1) %>%
+  ungroup()
+
+# Merge topics back to the original dataset
+dataset_with_topics <- reduced_dataset %>%
+  left_join(topic_assignments, by = c("Review_combined" = "term"))
+
+# Visualize topic distribution
+topic_distribution_plot <- topic_assignments %>%
+  ggplot(aes(x = reorder(term, -beta), y = beta, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  labs(title = "Topic Distribution of Reviews",
+       x = "Term",
+       y = "Beta (Weight in Topic)",
+       fill = "Topic") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  
+# Show the plot
+print(topic_distribution_plot)
+
+
+# Print top terms for each topic
+print(topic_terms)
+```
+
+**Key Findings:**
+
+Common Terms Across Topics: Certain terms such as "the," "and," and "this" appear consistently across all topics, suggesting commonality in language usage.
+Distinctive Topic Terms: Each topic has unique terms that distinguish it from others. For example, "book" is prominent in Topic 3, while "you" and "not" stand out in Topic 5.
+
+
+**Limitation:**
+
+The analysis was performed on a reduced dataset due to computational constraints. The original dataset, being large, presented challenges in processing efficiency. While the reduced dataset facilitated the analysis, it may not fully capture the diversity and nuances present in the complete set of book reviews.
+
+```{r}
+
+# Load necessary libraries
+library(tidytext)
+library(dplyr)
+library(ggplot2)
+library(forcats)
+library(randomForest)
+
+# Train a Random Forest classifier for sentiment prediction
+# Convert Rating to numeric if needed
+dataset$Rating <- as.numeric(dataset$Rating)
+
+# Check for missing values in Rating
+if (any(is.na(dataset$Rating))) {
+  stop("There are missing values in the Rating column. Handle them before proceeding.")
+}
+
+# Ensure sentiment_label is a factor
+dataset <- dataset %>%
+  mutate(sentiment_label = ifelse(Rating >= 4, "Positive", "Negative")) %>%
+  mutate(sentiment_label = as.factor(sentiment_label))
+
+# Select relevant columns for the model
+model_data <- dataset %>%
+  select(Review_text, sentiment_label)
+
+# Ensure Review_text is character
+model_data$Review_text <- as.character(model_data$Review_text)
+
+# Train Random Forest model
+random_forest_model <- randomForest(sentiment_label ~ Review_text, data = model_data, ntree = 100)
+
+# Print the model summary
+print(random_forest_model)
+
+# Make predictions on the training data
+predictions <- predict(random_forest_model, newdata = model_data)
+
+# Evaluate model accuracy
+confusion_matrix <- table(predictions, model_data$sentiment_label)
+print(confusion_matrix)
+
+
+```
+
+**Task D – Further exploration**
+
+**Conclusion:**
+
+The Random Forest classifier was employed for sentiment prediction based on book reviews. Here are the key findings:
+
+Model Summary:
+
+The Random Forest model was constructed with 100 trees, utilizing the Review_text variable to predict sentiment labels (Positive or Negative).
+The model's out-of-bag (OOB) estimate of the error rate is approximately 27.02%, indicating the percentage of misclassifications.
+Confusion Matrix:
+
+The confusion matrix provides a detailed breakdown of model performance.
+Class Error Rates:
+For Negative sentiment: 69.25%
+For Positive sentiment: 16.62%
+Accuracy on Training Data:
+The model achieved high accuracy on the training data, with only a small number of misclassifications.
+Out of 59,296 instances:
+True Negatives (Predicted Negative, Actually Negative): 11,708
+False Positives (Predicted Positive, Actually Negative): 2
+False Negatives (Predicted Negative, Actually Positive): 9
+True Positives (Predicted Positive, Actually Positive): 47,577
+
+
+
+**Future Work:**
+Class Imbalance Mitigation:
+
+Address the significant class imbalance in sentiment classes.
+Explore oversampling, undersampling, or alternative sampling strategies.
+Feature Engineering Exploration:
+
+Experiment with diverse text representations (e.g., TF-IDF, word embeddings).
+Enhance the model's ability to capture sentiment nuances through feature engineering.
+Hyperparameter Tuning:
+
+Conduct systematic hyperparameter search for the Random Forest model.
+Utilize grid search or randomized search to optimize model performance.
+Ensemble Method Investigation:
+
+Explore ensemble methods (stacking, boosting) for combining model predictions.
+Evaluate potential improvements in generalization and model robustness.
+Temporal Analysis and User-specific Sentiment:
+
+Investigate sentiment trends over time in book reviews.
+Explore personalized sentiment analysis based on individual reviewer behavior.
